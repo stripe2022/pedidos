@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ffffff">
+<link rel="stylesheet" href="styles.css">
+
 <title>Pedidos WhatsApp → A4 compacto</title>
 <style>
   :root{ --font-size: 9pt; --columns: 2; --margin: 10mm; --gap: 8mm; }
@@ -36,6 +40,58 @@
 
   @media print{ header,.orders-ui,.bottom-bar{ display:none!important } body{background:#fff} .paper{box-shadow:none;margin:0} .paper .sheet{padding:0} }
 </style>
+<style>
+  /* 1) Controles en una sola fila desplazable */
+.controls{
+  display: flex;
+  flex-wrap: nowrap;
+  gap: .5rem;
+  margin-left: auto;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.controls label, .controls select{ flex: 0 0 auto; }
+.controls::-webkit-scrollbar{ height: 6px; }
+.controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
+
+/* 2) Evitar desbordes de campos y botones */
+*{ box-sizing: border-box; }
+body{ overflow-x: hidden; }
+select, button{ max-width:100%; flex:0 0 auto; }
+textarea{ width:100%; }
+
+/* 3) Apilar Detalles/Productos en móviles */
+.order-card .row{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+}
+@media (max-width: 768px){
+  .order-card .row{ grid-template-columns: 1fr; }
+  .controls{ margin-left: 0; }
+  textarea{ min-height: 80px; }
+}
+
+/* 4) Botonera inferior desplazable para que no sobresalga */
+.bottom-bar{
+  display:flex;
+  gap:.5rem;
+  position: sticky;
+  bottom: 0;
+  background:#fff;
+  border-top:1px solid #e5e7eb;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  white-space:nowrap;
+}
+.bottom-bar button{ flex:0 0 auto; }
+
+</style>
+
+
 </head>
 <body>
   <header>
@@ -74,7 +130,7 @@
   <div class="bottom-bar">
     <button id="addOrder">+ Agregar pedido</button>
     <button id="clearAll">Limpiar todo</button>
-    <button id="demo">Cargar ejemplo</button>
+    
     <button class="primary" id="btnFormat">Formatear</button>
     <button id="btnPrint">Imprimir</button>
   </div>

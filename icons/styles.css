@@ -1,0 +1,27 @@
+/* Diseño por defecto (pantallas grandes): 2 columnas para Detalles / Productos */
+.order-card .row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+}
+
+/* En móviles (menos de 768px de ancho) mostrar en columna */
+@media (max-width: 768px) {
+  .order-card .row {
+    grid-template-columns: 1fr;
+  }
+  
+  textarea {
+    min-height: 70px; /* Ajusta si quieres más o menos altura */
+  }
+
+  .controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .4rem;
+  }
+
+  header h1 {
+    font-size: 0.9rem;
+  }
+}
