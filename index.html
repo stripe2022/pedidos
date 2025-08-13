@@ -272,11 +272,36 @@ textarea{ width:100%; }
 </script>
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js')
-    .then(() => console.log('Service Worker registrado'))
-    .catch(err => console.error('Error registrando Service Worker', err));
+  window.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('/pedidos/sw.js', { scope: '/pedidos/' });
+      console.log('SW registrado:', reg.scope);
+
+      // Aviso cuando hay nueva versión
+      reg.onupdatefound = () => {
+        const nw = reg.installing;
+        nw.onstatechange = async () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            // OPCIÓN A: activar de inmediato
+            if (reg.waiting) {
+              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+            // OPCIÓN B: mostrar un botón “Actualizar” y, si aceptan, haces lo mismo de arriba.
+          }
+        };
+      };
+
+      // Si el SW hace skipWaiting, recarga para tomar control
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        location.reload();
+      });
+    } catch (err) {
+      console.error('Error registrando SW:', err);
+    }
+  });
 }
 </script>
+
 
 </body>
 </html>
