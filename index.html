@@ -275,32 +275,30 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('DOMContentLoaded', async () => {
     try {
       const reg = await navigator.serviceWorker.register('/pedidos/sw.js', { scope: '/pedidos/' });
-      console.log('SW registrado:', reg.scope);
+      console.log('SW registrado con scope:', reg.scope);
 
-      // Aviso cuando hay nueva versión
+      // Detecta nuevas versiones e intenta activarlas
       reg.onupdatefound = () => {
         const nw = reg.installing;
-        nw.onstatechange = async () => {
+        nw.onstatechange = () => {
           if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            // OPCIÓN A: activar de inmediato
-            if (reg.waiting) {
-              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-            }
-            // OPCIÓN B: mostrar un botón “Actualizar” y, si aceptan, haces lo mismo de arriba.
+            // Activa de inmediato (o muestra un botón si prefieres)
+            reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
           }
         };
       };
 
-      // Si el SW hace skipWaiting, recarga para tomar control
+      // Si se activa la nueva versión, recarga para tomar control
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         location.reload();
       });
-    } catch (err) {
-      console.error('Error registrando SW:', err);
+    } catch (e) {
+      console.error('Error registrando SW:', e);
     }
   });
 }
 </script>
+
 
 
 </body>
