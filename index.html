@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pedidos WhatsApp → A4 compacto</title>
+<style>
+  :root{ --font-size: 9pt; --columns: 2; --margin: 10mm; --gap: 8mm; }
+  body{font-family: system-ui, Arial, Helvetica, sans-serif; margin:0; background:#f6f7f8; color:#111; display:flex; flex-direction:column; min-height:100vh}
+  header{background:#fff; border-bottom:1px solid #e5e7eb; padding:.75rem 1rem; display:flex; gap:.75rem; flex-wrap:wrap; align-items:center}
+  header h1{font-size:1rem; margin:0; font-weight:600}
+  .controls{display:flex; flex-wrap:wrap; gap:.5rem; margin-left:auto; align-items:center}
+  label{display:flex; align-items:center; gap:.35rem}
+  select, button{font:inherit; font-size:.9rem; padding:.45rem .7rem; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer}
+  textarea{width:100%; min-height:90px; resize:vertical; border:1px solid #e5e7eb; border-radius:8px; padding:.6rem; font:12px/1.35 ui-monospace, Menlo, Consolas, monospace; background:#fff}
+  .orders-ui{max-width:1100px; width:100%; margin:0 auto; padding:1rem; display:flex; flex-direction:column; gap:.75rem}
+  .order-card{background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:.9rem}
+  .order-card header{display:flex; align-items:center; justify-content:space-between; margin-bottom:.5rem}
+  .order-card h2{font-size:.95rem; margin:0}
+  .row{display:grid; grid-template-columns:1fr 1fr; gap:.75rem}
+  .paper{background:#fff; margin:10px auto; box-shadow:0 2px 24px rgba(0,0,0,.08); border-radius:10px; overflow:hidden; max-width:1100px; width:100%}
+  .paper .sheet{padding:12mm}
+  .bottom-bar{background:#fff; border-top:1px solid #e5e7eb; padding:.75rem 1rem; display:flex; gap:.5rem; justify-content:flex-end; position:sticky; bottom:0}
+
+  @page{ size:A4; margin: var(--margin) }
+  .sheet{ column-count: var(--columns); column-gap: var(--gap); font-size: var(--font-size); line-height:1.12 }
+  .order{ break-inside: avoid; margin:0 0 6mm 0 }
+  .order + .order{ border-top:1px dashed #c7c7c7; padding-top:3mm }
+  .pedido-label{ font-weight:700; margin-bottom:1mm }
+  .head{ font-weight:600; margin-bottom:1mm; opacity:.9 }
+  .line{ display:flex; justify-content:space-between; gap:.75rem }
+  .line .price{ min-width:28mm; text-align:right }
+  .totals{ margin-top:2mm }
+  .totals .rowt{ display:flex; justify-content:space-between; gap:.75rem; padding:.5mm 0 }
+  .t-caja{ font-weight:700; border:1px solid #000; padding:.75mm .5mm; border-radius:4px }
+
+  @media print{ header,.orders-ui,.bottom-bar{ display:none!important } body{background:#fff} .paper{box-shadow:none;margin:0} .paper .sheet{padding:0} }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Pedidos WhatsApp → A4 compacto</h1>
+    <div class="controls">
+      <label>Fuente
+        <select id="fontSize">
+          <option>8pt</option>
+          <option selected>9pt</option>
+          <option>10pt</option>
+          <option>11pt</option>
+        </select>
+      </label>
+      <label>Columnas
+        <select id="cols">
+          <option>1</option>
+          <option selected>2</option>
+          <option>3</option>
+        </select>
+      </label>
+      <label>Prefijo
+        <select id="itemPrefix">
+          <option value="dash" selected>— Guion</option>
+          <option value="dot">• Punto</option>
+          <option value="none">Sin prefijo</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="showLabels" checked> Mostrar “Pedido #”</label>
+      <label><input type="checkbox" id="showTotals" checked> Calcular total sin domicilio</label>
+    </div>
+  </header>
+
+  <section id="ordersUI" class="orders-ui"></section>
+  <div class="paper"><div class="sheet" id="sheet"></div></div>
+
+  <div class="bottom-bar">
+    <button id="addOrder">+ Agregar pedido</button>
+    <button id="clearAll">Limpiar todo</button>
+    <button id="demo">Cargar ejemplo</button>
+    <button class="primary" id="btnFormat">Formatear</button>
+    <button id="btnPrint">Imprimir</button>
+  </div>
+
+<script>
+(function(){
+  function stripEmojis(s){
+    return (s||'').replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
+  }
+  function normalize(s){
+    return stripEmojis(s||'')
+      .replace(/\bReenviado\b/gi,'')
+      .replace(/https?:\/\/\S+/g,'')
+      .replace(/\s+\n/g,'\n')
+      .replace(/\n{3,}/g,'\n\n')
+      .trim();
+  }
+  function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
+  function parseMoney(str){
+    const s=(str||'').replace(/[^0-9,\.]/g,'');
+    if(!s) return 0;
+    if(/,\d{2}$/.test(s) && s.includes('.')) return parseFloat(s.replace(/\./g,'').replace(',', '.'))||0;
+    if(/,\d{2}$/.test(s)) return parseFloat(s.replace(',', '.'))||0;
+    return parseFloat(s.replace(/,/g,''))||0;
+  }
+  function money(x){ return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`; }
+
+  function computeCaja(lines){
+    const filtered = lines.filter(l=> !/\btotal\b/i.test(l));
+    const amounts = [];
+    filtered.forEach(l=>{ const i=l.lastIndexOf('$'); if(i>0) amounts.push(parseMoney(l.slice(i))); });
+    if(amounts.length===0) return 0;
+    const sum = amounts.reduce((a,b)=>a+b,0);
+    if(amounts.length<2) return sum;
+    return sum - amounts[amounts.length-1];
+  }
+
+  function buildOrderDOM(detailsText, itemsText, idx){
+    const order=document.createElement('div'); order.className='order';
+    if(document.getElementById('showLabels')?.checked){
+      const lab=document.createElement('div'); lab.className='pedido-label'; lab.textContent=`Pedido ${idx+1}`; order.appendChild(lab);
+    }
+    const details=normalize(detailsText);
+    if(details){ const h=document.createElement('div'); h.className='head'; h.textContent=details.replace(/\n+/g,' · '); order.appendChild(h); }
+
+    const prefixMode=getPrefix();
+    const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
+
+    rawItems.forEach(ln=>{
+      const i=ln.lastIndexOf('$');
+      if(i<=0) return;
+      let left=ln.slice(0,i).replace(/[:\-]+\s*$/,'').trim();
+      if(!/^[-–•]/.test(left)){
+        if(prefixMode==='dash') left='— '+left; else if(prefixMode==='dot') left='• '+left;
+      }
+      const right=ln.slice(i).replace(/\s+/g,'');
+      const row=document.createElement('div'); row.className='line';
+      const a=document.createElement('span'); a.textContent=left;
+      const b=document.createElement('span'); b.className='price'; b.textContent=right;
+      row.append(a,b); order.appendChild(row);
+    });
+
+    if(document.getElementById('showTotals')?.checked){
+      const caja = computeCaja(rawItems);
+      const totals=document.createElement('div'); totals.className='totals';
+      const rowCaja=document.createElement('div'); rowCaja.className='rowt t-caja';
+      rowCaja.innerHTML=`<span>Total sin domicilio</span><span class="price">${money(caja)}</span>`;
+      totals.append(rowCaja); order.appendChild(totals);
+    }
+    return order;
+  }
+
+  function render(){
+    const sheet=document.getElementById('sheet'); sheet.innerHTML='';
+    const cards=[...document.querySelectorAll('.order-card')];
+    cards.forEach((card,idx)=>{
+      const d=card.querySelector('.ta-details')?.value||'';
+      const i=card.querySelector('.ta-items')?.value||'';
+      if(d.trim()||i.trim()) sheet.appendChild(buildOrderDOM(d,i,idx));
+    });
+  }
+
+  const ordersUI=document.getElementById('ordersUI');
+  function renumber(){ [...ordersUI.children].forEach((sec,i)=>{ const h2=sec.querySelector('h2'); if(h2) h2.textContent=`Pedido ${i+1}`; }); }
+  function saveState(){ const data=[...document.querySelectorAll('.order-card')].map(card=>({d:card.querySelector('.ta-details')?.value||'', i:card.querySelector('.ta-items')?.value||''})); localStorage.setItem('orders_v5', JSON.stringify(data)); }
+  function loadState(){ const raw=localStorage.getItem('orders_v5'); if(!raw){ addOrder(); return; } try{ const arr=JSON.parse(raw); if(Array.isArray(arr)&&arr.length){ arr.forEach(o=>addOrder(o.d||'', o.i||'')); } else addOrder(); }catch{ addOrder(); } }
+  function addOrder(detailsText='', itemsText=''){
+    const idx=ordersUI.children.length;
+    const card=document.createElement('section'); card.className='order-card';
+    card.innerHTML=`
+      <header><h2>Pedido ${idx+1}</h2><div style="display:flex;gap:.5rem"><button class="dup">Duplicar</button><button class="del">Eliminar</button></div></header>
+      <div class="row">
+        <div>
+          <textarea class="ta-details" placeholder="Detalles: cliente, dirección, tel."></textarea>
+        </div>
+        <div>
+          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio\nEj.: Huevera Azul $2800\nDomicilio $200\nTOTAL (opcional) $3000"></textarea>
+        </div>
+      </div>`;
+    ordersUI.appendChild(card);
+    const taD=card.querySelector('.ta-details'); const taI=card.querySelector('.ta-items');
+    taD.value=detailsText; taI.value=itemsText;
+    taD.addEventListener('input', saveState); taI.addEventListener('input', saveState);
+    card.querySelector('.del').addEventListener('click', ()=>{ card.remove(); renumber(); saveState(); render(); });
+    card.querySelector('.dup').addEventListener('click', ()=>{ addOrder(taD.value, taI.value); render(); saveState(); });
+  }
+
+  function init(){
+    document.getElementById('addOrder')?.addEventListener('click', ()=>{ addOrder(); saveState(); window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); });
+    document.getElementById('clearAll')?.addEventListener('click', ()=>{ ordersUI.innerHTML=''; localStorage.removeItem('orders_v5'); addOrder(); render(); });
+    document.getElementById('demo')?.addEventListener('click', ()=>{
+      ordersUI.innerHTML='';
+      addOrder(
+        'Odalmis · Calle Gloria / Parque y Maceo · 58991778',
+        '2 Desodorantes $1000\n3 Huevera (A/R/Azul) $8400\nColonia $1500\nTazas sin plato $1800\nDomicilio $200'
+      );
+      addOrder(
+        'Yaneisy · 6ta entre Central y A Vigía · Consultorio 16-24 · 55180160',
+        'Huevera Azul $2800\nDomicilio $200\nTOTAL $3000'
+      );
+      addOrder(
+        'Cliente Prueba',
+        'Item A $1.234,50\nItem B $765,50\nDomicilio $150\nTOTAL $2.150,00'
+      );
+      saveState(); render();
+    });
+    document.getElementById('btnFormat')?.addEventListener('click', render);
+    document.getElementById('btnPrint')?.addEventListener('click', ()=>window.print());
+    document.getElementById('fontSize')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--font-size', e.target.value); render(); });
+    document.getElementById('cols')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--columns', e.target.value); render(); });
+    document.getElementById('itemPrefix')?.addEventListener('change', render);
+
+    loadState();
+    render();
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+</body>
+</html>
