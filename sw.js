@@ -13,8 +13,8 @@ const ASSETS = [
   `${BASE}icons/icon-192.png`,
   `${BASE}icons/icon-512.png`,
   // Ajusta estos nombres si tus archivos reales son otros
-  `${BASE}styles.css`,
-  `${BASE}app.js`
+  `${BASE}styles.css`
+  
 ];
 
 // ==== Actualización bajo demanda (desde la página) ====
