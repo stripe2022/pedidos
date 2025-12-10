@@ -137,14 +137,28 @@ textarea{ width:100%; }
   function stripEmojis(s){
     return (s||'').replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
-  function normalize(s){
-    return stripEmojis(s||'')
-      .replace(/\bReenviado\b/gi,'')
-      .replace(/https?:\/\/\S+/g,'')
-      .replace(/\s+\n/g,'\n')
-      .replace(/\n{3,}/g,'\n\n')
-      .trim();
-  }
+ function normalize(s){
+  return stripEmojis(s||'')
+    // 🔴 Quita el bloque de hora de WhatsApp: [11:56 AM, 12/9/2025]
+    .replace(/\[\d{1,2}:\d{2}\s*(AM|PM)?,?\s*\d{1,2}\/\d{1,2}\/\d{4}\]/gi, '')
+
+    // 🔴 Quita el nombre del remitente tipo: "♥️Mary Cuba:" o "Juan Pérez:"
+    .replace(/^[^:\n]{2,40}:\s*/gm, '')
+
+    // 🔴 Quita la palabra "Reenviado"
+    .replace(/\bReenviado\b/gi,'')
+
+    // 🔴 Quita links
+    .replace(/https?:\/\/\S+/g,'')
+
+    // 🔴 Limpia saltos de línea feos
+    .replace(/\s+\n/g,'\n')
+    .replace(/\n{3,}/g,'\n\n')
+
+    .trim();
+}
+
+
   function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
   function parseMoney(str){
     const s=(str||'').replace(/[^0-9,\.]/g,'');
