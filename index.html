@@ -216,7 +216,13 @@ textarea{ width:100%; }
         if(prefixMode==='dash') left='— '+left; else if(prefixMode==='dot') left='• '+left;
       }
       const right=ln.slice(i).replace(/\s+/g,'');
-      const row=document.createElement('div'); row.className='line';
+      const row = document.createElement('div');
+row.className = 'line';
+
+// ✅ SI LA LÍNEA ES TOTAL → SE RESALTA
+if (/^total\b/i.test(ln)) {
+  row.classList.add('line-total');
+}
       const a=document.createElement('span'); a.textContent=left;
       const b=document.createElement('span'); b.className='price'; b.textContent=right;
       row.append(a,b); order.appendChild(row);
