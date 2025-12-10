@@ -90,8 +90,6 @@ textarea{ width:100%; }
 .bottom-bar button{ flex:0 0 auto; }
 
 </style>
-
-
 </head>
 <body>
   <header>
@@ -130,7 +128,6 @@ textarea{ width:100%; }
   <div class="bottom-bar">
     <button id="addOrder">+ Agregar</button>
     <button id="clearAll">Limpiar todo</button>
-    
     <button class="primary" id="btnFormat">Formatear</button>
     <button id="btnPrint">Imprimir</button>
   </div>
@@ -156,16 +153,29 @@ textarea{ width:100%; }
     if(/,\d{2}$/.test(s)) return parseFloat(s.replace(',', '.'))||0;
     return parseFloat(s.replace(/,/g,''))||0;
   }
-  function money(x){ return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`; }
+  function money(x){ 
+    return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
+  }
 
+  // CÁLCULO CORREGIDO: suma productos, ignora TOTAL y DOMICILIO/DELIVERY
   function computeCaja(lines){
-    const filtered = lines.filter(l=> !/\btotal\b/i.test(l));
-    const amounts = [];
-    filtered.forEach(l=>{ const i=l.lastIndexOf('$'); if(i>0) amounts.push(parseMoney(l.slice(i))); });
-    if(amounts.length===0) return 0;
-    const sum = amounts.reduce((a,b)=>a+b,0);
-    if(amounts.length<2) return sum;
-    return sum - amounts[amounts.length-1];
+    // Solo líneas que tengan $
+    const moneyLines = (lines || []).filter(l => l && l.includes('$'));
+
+    // Ignorar líneas que contengan "total"
+    const withoutTotal = moneyLines.filter(l => !/\btotal\b/i.test(l));
+
+    // Consideramos productos las que no sean domicilio / delivery
+    const productLines = withoutTotal.filter(l => !/domicilio/i.test(l) && !/delivery/i.test(l));
+
+    const amounts = productLines.map(line => {
+      const i = line.lastIndexOf('$');
+      if (i <= 0) return 0;
+      return parseMoney(line.slice(i));
+    }).filter(n => n > 0);
+
+    if (!amounts.length) return 0;
+    return amounts.reduce((a,b) => a + b, 0);
   }
 
   function buildOrderDOM(detailsText, itemsText, idx){
@@ -174,7 +184,12 @@ textarea{ width:100%; }
       const lab=document.createElement('div'); lab.className='pedido-label'; lab.textContent=`Pedido ${idx+1}`; order.appendChild(lab);
     }
     const details=normalize(detailsText);
-    if(details){ const h=document.createElement('div'); h.className='head'; h.textContent=details.replace(/\n+/g,' · '); order.appendChild(h); }
+    if(details){ 
+      const h=document.createElement('div'); 
+      h.className='head'; 
+      h.textContent=details.replace(/\n+/g,' · '); 
+      order.appendChild(h); 
+    }
 
     const prefixMode=getPrefix();
     const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
@@ -214,34 +229,134 @@ textarea{ width:100%; }
   }
 
   const ordersUI=document.getElementById('ordersUI');
-  function renumber(){ [...ordersUI.children].forEach((sec,i)=>{ const h2=sec.querySelector('h2'); if(h2) h2.textContent=`Pedido ${i+1}`; }); }
-  function saveState(){ const data=[...document.querySelectorAll('.order-card')].map(card=>({d:card.querySelector('.ta-details')?.value||'', i:card.querySelector('.ta-items')?.value||''})); localStorage.setItem('orders_v5', JSON.stringify(data)); }
-  function loadState(){ const raw=localStorage.getItem('orders_v5'); if(!raw){ addOrder(); return; } try{ const arr=JSON.parse(raw); if(Array.isArray(arr)&&arr.length){ arr.forEach(o=>addOrder(o.d||'', o.i||'')); } else addOrder(); }catch{ addOrder(); } }
+  function renumber(){ 
+    [...ordersUI.children].forEach((sec,i)=>{ 
+      const h2=sec.querySelector('h2'); 
+      if(h2) h2.textContent=`Pedido ${i+1}`; 
+    }); 
+  }
+  function saveState(){ 
+    const data=[...document.querySelectorAll('.order-card')].map(card=>({
+      d:card.querySelector('.ta-details')?.value||'', 
+      i:card.querySelector('.ta-items')?.value||''
+    })); 
+    localStorage.setItem('orders_v5', JSON.stringify(data)); 
+  }
+
+  function loadState(){ 
+    const raw=localStorage.getItem('orders_v5'); 
+    if(!raw){ 
+      addOrder(); 
+      return; 
+    } 
+    try{ 
+      const arr=JSON.parse(raw); 
+      if(Array.isArray(arr)&&arr.length){ 
+        arr.forEach(o=>addOrder(o.d||'', o.i||'')); 
+      } else addOrder(); 
+    }catch{ 
+      addOrder(); 
+    } 
+  }
+
+  // MODO TRABAJADOR: pega el pedido completo de WhatsApp y se separa solo
+  function autoFillFromRaw(card, rawText){
+    if(!rawText) return;
+    const cleaned = normalize(rawText);
+    const lines = cleaned.split(/\n+/).map(l => l.trim()).filter(Boolean);
+
+    const detailLines = [];
+    const itemLines = [];
+
+    lines.forEach(line => {
+      // Si tiene $, lo consideramos producto
+      if(line.includes('$')){
+        itemLines.push(line);
+      } else {
+        // Sin $, lo consideramos detalle (nombre, dirección, teléfono, etc.)
+        detailLines.push(line);
+      }
+    });
+
+    const taD = card.querySelector('.ta-details');
+    const taI = card.querySelector('.ta-items');
+
+    if(taD) taD.value = detailLines.join(' · ');
+    if(taI) taI.value = itemLines.join('\n');
+
+    saveState();
+    render();
+  }
+
   function addOrder(detailsText='', itemsText=''){
     const idx=ordersUI.children.length;
-    const card=document.createElement('section'); card.className='order-card';
+    const card=document.createElement('section'); 
+    card.className='order-card';
     card.innerHTML=`
-      <header><h2>Pedido ${idx+1}</h2><div style="display:flex;gap:.5rem"><button class="dup">Duplicar</button><button class="del">Eliminar</button></div></header>
+      <header>
+        <h2>Pedido ${idx+1}</h2>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="paste">Pegar WhatsApp</button>
+          <button class="dup">Duplicar</button>
+          <button class="del">Eliminar</button>
+        </div>
+      </header>
       <div class="row">
         <div>
           <textarea class="ta-details" placeholder="Detalles: cliente, dirección, tel."></textarea>
         </div>
         <div>
-          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio\nEj.: Huevera Azul $2800\nDomicilio $200\nTOTAL (opcional) $3000"></textarea>
+          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio&#10;Ej.: Huevera Azul $2800&#10;Domicilio $200&#10;TOTAL (opcional) $3000"></textarea>
         </div>
       </div>`;
     ordersUI.appendChild(card);
-    const taD=card.querySelector('.ta-details'); const taI=card.querySelector('.ta-items');
-    taD.value=detailsText; taI.value=itemsText;
-    taD.addEventListener('input', saveState); taI.addEventListener('input', saveState);
-    card.querySelector('.del').addEventListener('click', ()=>{ card.remove(); renumber(); saveState(); render(); });
-    card.querySelector('.dup').addEventListener('click', ()=>{ addOrder(taD.value, taI.value); render(); saveState(); });
+
+    const taD=card.querySelector('.ta-details'); 
+    const taI=card.querySelector('.ta-items');
+    taD.value=detailsText; 
+    taI.value=itemsText;
+
+    taD.addEventListener('input', ()=>{ saveState(); });
+    taI.addEventListener('input', ()=>{ saveState(); });
+
+    // Eliminar
+    card.querySelector('.del').addEventListener('click', ()=>{ 
+      card.remove(); 
+      renumber(); 
+      saveState(); 
+      render(); 
+    });
+
+    // Duplicar
+    card.querySelector('.dup').addEventListener('click', ()=>{ 
+      addOrder(taD.value, taI.value); 
+      render(); 
+      saveState(); 
+    });
+
+    // Pegar pedido completo de WhatsApp (modo trabajador)
+    const btnPaste = card.querySelector('.paste');
+    if(btnPaste){
+      btnPaste.addEventListener('click', () => {
+        const raw = prompt('Pega aquí el texto completo del pedido de WhatsApp:');
+        autoFillFromRaw(card, raw);
+      });
+    }
   }
 
   function init(){
-    document.getElementById('addOrder')?.addEventListener('click', ()=>{ addOrder(); saveState(); window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); });
-    document.getElementById('clearAll')?.addEventListener('click', ()=>{ ordersUI.innerHTML=''; localStorage.removeItem('orders_v5'); addOrder(); render(); });
-    document.getElementById('demo')?.addEventListener('click', ()=>{
+    document.getElementById('addOrder')?.addEventListener('click', ()=>{ 
+      addOrder(); 
+      saveState(); 
+      window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); 
+    });
+    document.getElementById('clearAll')?.addEventListener('click', ()=>{ 
+      ordersUI.innerHTML=''; 
+      localStorage.removeItem('orders_v5'); 
+      addOrder(); 
+      render(); 
+    });
+    document.getElementById('demo')?.addEventListener('click', ()=>{ 
       ordersUI.innerHTML='';
       addOrder(
         'Odalmis · Calle Gloria / Parque y Maceo · 58991778',
@@ -255,21 +370,32 @@ textarea{ width:100%; }
         'Cliente Prueba',
         'Item A $1.234,50\nItem B $765,50\nDomicilio $150\nTOTAL $2.150,00'
       );
-      saveState(); render();
+      saveState(); 
+      render();
     });
     document.getElementById('btnFormat')?.addEventListener('click', render);
     document.getElementById('btnPrint')?.addEventListener('click', ()=>window.print());
-    document.getElementById('fontSize')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--font-size', e.target.value); render(); });
-    document.getElementById('cols')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--columns', e.target.value); render(); });
+    document.getElementById('fontSize')?.addEventListener('change', e=>{ 
+      document.documentElement.style.setProperty('--font-size', e.target.value); 
+      render(); 
+    });
+    document.getElementById('cols')?.addEventListener('change', e=>{ 
+      document.documentElement.style.setProperty('--columns', e.target.value); 
+      render(); 
+    });
     document.getElementById('itemPrefix')?.addEventListener('change', render);
 
     loadState();
     render();
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+  if(document.readyState==='loading') 
+    document.addEventListener('DOMContentLoaded', init); 
+  else 
+    init();
 })();
 </script>
+
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('DOMContentLoaded', async () => {
@@ -280,9 +406,9 @@ if ('serviceWorker' in navigator) {
       // Detecta nuevas versiones e intenta activarlas
       reg.onupdatefound = () => {
         const nw = reg.installing;
+        if (!nw) return;
         nw.onstatechange = () => {
           if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            // Activa de inmediato (o muestra un botón si prefieres)
             reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
           }
         };
@@ -298,8 +424,6 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
-
-
 
 </body>
 </html>
