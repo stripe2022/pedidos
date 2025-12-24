@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="manifest" href="/pedidos/manifest.json">
+<meta name="theme-color" content="#ffffff">
+<link rel="stylesheet" href="/pedidos/styles.css">
+
 <title>Pedidos WhatsApp → A4 compacto</title>
 <style>
   :root{ --font-size: 9pt; --columns: 2; --margin: 10mm; --gap: 8mm; }
@@ -36,7 +40,57 @@
 
   @media print{ header,.orders-ui,.bottom-bar{ display:none!important } body{background:#fff} .paper{box-shadow:none;margin:0} .paper .sheet{padding:0} }
 </style>
+<style>
+  /* 1) Controles en una sola fila desplazable */
+.controls{
+  display: flex;
+  flex-wrap: nowrap;
+  gap: .5rem;
+  margin-left: auto;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.controls label, .controls select{ flex: 0 0 auto; }
+.controls::-webkit-scrollbar{ height: 6px; }
+.controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
+
+/* 2) Evitar desbordes de campos y botones */
+*{ box-sizing: border-box; }
+body{ overflow-x: hidden; }
+select, button{ max-width:100%; flex:0 0 auto; }
+textarea{ width:100%; }
+
+/* 3) Apilar Detalles/Productos en móviles */
+.order-card .row{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+}
+@media (max-width: 768px){
+  .order-card .row{ grid-template-columns: 1fr; }
+  .controls{ margin-left: 0; }
+  textarea{ min-height: 80px; }
+}
+
+/* 4) Botonera inferior desplazable para que no sobresalga */
+.bottom-bar{
+  display:flex;
+  gap:.5rem;
+  position: sticky;
+  bottom: 0;
+  background:#fff;
+  border-top:1px solid #e5e7eb;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  white-space:nowrap;
+}
+.bottom-bar button{ flex:0 0 auto; }
+</style>
 </head>
+
 <body>
   <header>
     <h1>Pedidos WhatsApp → A4 compacto</h1>
@@ -72,9 +126,9 @@
   <div class="paper"><div class="sheet" id="sheet"></div></div>
 
   <div class="bottom-bar">
-    <button id="addOrder">+ Agregar pedido</button>
+    <button id="addOrder">+ Agregar</button>
     <button id="clearAll">Limpiar todo</button>
-    <button id="demo">Cargar ejemplo</button>
+
     <button class="primary" id="btnFormat">Formatear</button>
     <button id="btnPrint">Imprimir</button>
   </div>
@@ -84,15 +138,26 @@
   function stripEmojis(s){
     return (s||'').replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
+
+  // ✅ UPDATED: normaliza y además limpia prefijos típicos de WhatsApp en "info"
   function normalize(s){
     return stripEmojis(s||'')
       .replace(/\bReenviado\b/gi,'')
       .replace(/https?:\/\/\S+/g,'')
+
+      // Quita prefijos tipo: [24/12, 11:47 a.m.]  (variante con espacios/puntos)
+      .replace(/^\s*\[\d{1,2}\/\d{1,2},\s*[0-9:\.]+\s*(?:a\.?\s*m\.?|p\.?\s*m\.?)\]\s*/gmi,'')
+
+      // Quita "Nombre:" al inicio de línea (ej: "Mary Cuba:")
+      .replace(/^\s*[^:\n]{1,40}:\s*/gmi,'')
+
       .replace(/\s+\n/g,'\n')
       .replace(/\n{3,}/g,'\n\n')
       .trim();
   }
+
   function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
+
   function parseMoney(str){
     const s=(str||'').replace(/[^0-9,\.]/g,'');
     if(!s) return 0;
@@ -100,50 +165,111 @@
     if(/,\d{2}$/.test(s)) return parseFloat(s.replace(',', '.'))||0;
     return parseFloat(s.replace(/,/g,''))||0;
   }
-  function money(x){ return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`; }
 
-  function computeCaja(lines){
-    const filtered = lines.filter(l=> !/\btotal\b/i.test(l));
-    const amounts = [];
-    filtered.forEach(l=>{ const i=l.lastIndexOf('$'); if(i>0) amounts.push(parseMoney(l.slice(i))); });
-    if(amounts.length===0) return 0;
-    const sum = amounts.reduce((a,b)=>a+b,0);
-    if(amounts.length<2) return sum;
-    return sum - amounts[amounts.length-1];
+  function money(x){
+    return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
+  }
+
+  // ✅ detecta líneas tipo "💵 Total: $19500.00" y las ignora (para items)
+  function isTotalLine(s){
+    return /\btotal\b/i.test(stripEmojis(s||''));
+  }
+
+  // ✅ cálculo robusto (no depende del orden)
+  function computeTotals(lines){
+    const out = { subtotal: 0, envio: 0, total: 0 };
+
+    const isEnvioLine = (s) =>
+      /\b(domicilio|envio|envío|entrega|delivery|mensajer[íi]a|reparto)\b/i.test(stripEmojis(s||''));
+
+    for(const raw of lines){
+      if(!raw) continue;
+
+      // ignora TOTAL aunque tenga emojis
+      if(isTotalLine(raw)) continue;
+
+      const i = raw.lastIndexOf('$');
+      if(i < 0) continue; // sin $ => ignora
+
+      const amount = parseMoney(raw.slice(i));
+      if(!isFinite(amount) || amount <= 0) continue;
+
+      if(isEnvioLine(raw)) out.envio += amount;
+      else out.subtotal += amount;
+    }
+
+    out.total = out.subtotal + out.envio;
+    return out;
   }
 
   function buildOrderDOM(detailsText, itemsText, idx){
     const order=document.createElement('div'); order.className='order';
+
     if(document.getElementById('showLabels')?.checked){
-      const lab=document.createElement('div'); lab.className='pedido-label'; lab.textContent=`Pedido ${idx+1}`; order.appendChild(lab);
+      const lab=document.createElement('div');
+      lab.className='pedido-label';
+      lab.textContent=`Pedido ${idx+1}`;
+      order.appendChild(lab);
     }
+
+    // ✅ aquí usa normalize() (ya limpia timestamps/nombre de WhatsApp)
     const details=normalize(detailsText);
-    if(details){ const h=document.createElement('div'); h.className='head'; h.textContent=details.replace(/\n+/g,' · '); order.appendChild(h); }
+    if(details){
+      const h=document.createElement('div');
+      h.className='head';
+      h.textContent=details.replace(/\n+/g,' · ');
+      order.appendChild(h);
+    }
 
     const prefixMode=getPrefix();
     const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
 
+    // líneas (solo ítems que tienen $)
     rawItems.forEach(ln=>{
+      // ❗ si es TOTAL, no la mostramos como línea de item
+      if(isTotalLine(ln)) return;
+
       const i=ln.lastIndexOf('$');
       if(i<=0) return;
+
       let left=ln.slice(0,i).replace(/[:\-]+\s*$/,'').trim();
       if(!/^[-–•]/.test(left)){
-        if(prefixMode==='dash') left='— '+left; else if(prefixMode==='dot') left='• '+left;
+        if(prefixMode==='dash') left='— '+left;
+        else if(prefixMode==='dot') left='• '+left;
       }
       const right=ln.slice(i).replace(/\s+/g,'');
+
       const row=document.createElement('div'); row.className='line';
       const a=document.createElement('span'); a.textContent=left;
       const b=document.createElement('span'); b.className='price'; b.textContent=right;
-      row.append(a,b); order.appendChild(row);
+      row.append(a,b);
+      order.appendChild(row);
     });
 
+    // Totales: siempre "Total sin domicilio" y si hay domicilio muestra "Total"
     if(document.getElementById('showTotals')?.checked){
-      const caja = computeCaja(rawItems);
-      const totals=document.createElement('div'); totals.className='totals';
-      const rowCaja=document.createElement('div'); rowCaja.className='rowt t-caja';
-      rowCaja.innerHTML=`<span>Total sin domicilio</span><span class="price">${money(caja)}</span>`;
-      totals.append(rowCaja); order.appendChild(totals);
+      const t = computeTotals(rawItems);
+
+      const totals = document.createElement('div');
+      totals.className = 'totals';
+
+      // Total sin domicilio (subtotal)
+      const rowSub = document.createElement('div');
+      rowSub.className = 'rowt t-caja';
+      rowSub.innerHTML = `<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
+      totals.append(rowSub);
+
+      // Si hay domicilio/envío, mostrar Total final (sin mostrar "Domicilio")
+      if(t.envio > 0){
+        const rowTot = document.createElement('div');
+        rowTot.className = 'rowt';
+        rowTot.innerHTML = `<span>Total</span><span class="price">${money(t.total)}</span>`;
+        totals.append(rowTot);
+      }
+
+      order.appendChild(totals);
     }
+
     return order;
   }
 
@@ -158,61 +284,133 @@
   }
 
   const ordersUI=document.getElementById('ordersUI');
-  function renumber(){ [...ordersUI.children].forEach((sec,i)=>{ const h2=sec.querySelector('h2'); if(h2) h2.textContent=`Pedido ${i+1}`; }); }
-  function saveState(){ const data=[...document.querySelectorAll('.order-card')].map(card=>({d:card.querySelector('.ta-details')?.value||'', i:card.querySelector('.ta-items')?.value||''})); localStorage.setItem('orders_v5', JSON.stringify(data)); }
-  function loadState(){ const raw=localStorage.getItem('orders_v5'); if(!raw){ addOrder(); return; } try{ const arr=JSON.parse(raw); if(Array.isArray(arr)&&arr.length){ arr.forEach(o=>addOrder(o.d||'', o.i||'')); } else addOrder(); }catch{ addOrder(); } }
+  function renumber(){
+    [...ordersUI.children].forEach((sec,i)=>{
+      const h2=sec.querySelector('h2');
+      if(h2) h2.textContent=`Pedido ${i+1}`;
+    });
+  }
+
+  function saveState(){
+    const data=[...document.querySelectorAll('.order-card')].map(card=>({
+      d:card.querySelector('.ta-details')?.value||'',
+      i:card.querySelector('.ta-items')?.value||''
+    }));
+    localStorage.setItem('orders_v5', JSON.stringify(data));
+  }
+
+  function loadState(){
+    const raw=localStorage.getItem('orders_v5');
+    if(!raw){ addOrder(); return; }
+    try{
+      const arr=JSON.parse(raw);
+      if(Array.isArray(arr)&&arr.length){
+        arr.forEach(o=>addOrder(o.d||'', o.i||''));
+      } else addOrder();
+    }catch{ addOrder(); }
+  }
+
   function addOrder(detailsText='', itemsText=''){
     const idx=ordersUI.children.length;
     const card=document.createElement('section'); card.className='order-card';
     card.innerHTML=`
-      <header><h2>Pedido ${idx+1}</h2><div style="display:flex;gap:.5rem"><button class="dup">Duplicar</button><button class="del">Eliminar</button></div></header>
+      <header>
+        <h2>Pedido ${idx+1}</h2>
+        <div style="display:flex;gap:.5rem">
+          <button class="dup">Duplicar</button>
+          <button class="del">Eliminar</button>
+        </div>
+      </header>
       <div class="row">
         <div>
           <textarea class="ta-details" placeholder="Detalles: cliente, dirección, tel."></textarea>
         </div>
         <div>
-          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio\nEj.: Huevera Azul $2800\nDomicilio $200\nTOTAL (opcional) $3000"></textarea>
+          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio
+Ej.: Huevera Azul $2800
+Domicilio $200
+TOTAL (opcional) $3000"></textarea>
         </div>
       </div>`;
     ordersUI.appendChild(card);
-    const taD=card.querySelector('.ta-details'); const taI=card.querySelector('.ta-items');
-    taD.value=detailsText; taI.value=itemsText;
-    taD.addEventListener('input', saveState); taI.addEventListener('input', saveState);
-    card.querySelector('.del').addEventListener('click', ()=>{ card.remove(); renumber(); saveState(); render(); });
-    card.querySelector('.dup').addEventListener('click', ()=>{ addOrder(taD.value, taI.value); render(); saveState(); });
+
+    const taD=card.querySelector('.ta-details');
+    const taI=card.querySelector('.ta-items');
+    taD.value=detailsText;
+    taI.value=itemsText;
+
+    taD.addEventListener('input', ()=>{ saveState(); render(); });
+    taI.addEventListener('input', ()=>{ saveState(); render(); });
+
+    card.querySelector('.del').addEventListener('click', ()=>{
+      card.remove(); renumber(); saveState(); render();
+    });
+    card.querySelector('.dup').addEventListener('click', ()=>{
+      addOrder(taD.value, taI.value); render(); saveState();
+    });
   }
 
   function init(){
-    document.getElementById('addOrder')?.addEventListener('click', ()=>{ addOrder(); saveState(); window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); });
-    document.getElementById('clearAll')?.addEventListener('click', ()=>{ ordersUI.innerHTML=''; localStorage.removeItem('orders_v5'); addOrder(); render(); });
-    document.getElementById('demo')?.addEventListener('click', ()=>{
-      ordersUI.innerHTML='';
-      addOrder(
-        'Odalmis · Calle Gloria / Parque y Maceo · 58991778',
-        '2 Desodorantes $1000\n3 Huevera (A/R/Azul) $8400\nColonia $1500\nTazas sin plato $1800\nDomicilio $200'
-      );
-      addOrder(
-        'Yaneisy · 6ta entre Central y A Vigía · Consultorio 16-24 · 55180160',
-        'Huevera Azul $2800\nDomicilio $200\nTOTAL $3000'
-      );
-      addOrder(
-        'Cliente Prueba',
-        'Item A $1.234,50\nItem B $765,50\nDomicilio $150\nTOTAL $2.150,00'
-      );
-      saveState(); render();
+    document.getElementById('addOrder')?.addEventListener('click', ()=>{
+      addOrder(); saveState();
+      window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'});
+      render();
     });
+
+    document.getElementById('clearAll')?.addEventListener('click', ()=>{
+      ordersUI.innerHTML='';
+      localStorage.removeItem('orders_v5');
+      addOrder();
+      render();
+    });
+
     document.getElementById('btnFormat')?.addEventListener('click', render);
     document.getElementById('btnPrint')?.addEventListener('click', ()=>window.print());
-    document.getElementById('fontSize')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--font-size', e.target.value); render(); });
-    document.getElementById('cols')?.addEventListener('change', e=>{ document.documentElement.style.setProperty('--columns', e.target.value); render(); });
+
+    document.getElementById('fontSize')?.addEventListener('change', e=>{
+      document.documentElement.style.setProperty('--font-size', e.target.value);
+      render();
+    });
+    document.getElementById('cols')?.addEventListener('change', e=>{
+      document.documentElement.style.setProperty('--columns', e.target.value);
+      render();
+    });
     document.getElementById('itemPrefix')?.addEventListener('change', render);
 
     loadState();
     render();
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('/pedidos/sw.js', { scope: '/pedidos/' });
+      console.log('SW registrado con scope:', reg.scope);
+
+      reg.onupdatefound = () => {
+        const nw = reg.installing;
+        nw.onstatechange = () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
+          }
+        };
+      };
+
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        location.reload();
+      });
+    } catch (e) {
+      console.error('Error registrando SW:', e);
+    }
+  });
+}
+</script>
+
 </body>
 </html>
