@@ -40,50 +40,55 @@
 
   @media print{ header,.orders-ui,.bottom-bar{ display:none!important } body{background:#fff} .paper{box-shadow:none;margin:0} .paper .sheet{padding:0} }
 </style>
+
 <style>
-.controls{
-  display: flex;
-  flex-wrap: nowrap;
-  gap: .5rem;
-  margin-left: auto;
-  align-items: center;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.controls label, .controls select{ flex: 0 0 auto; }
-.controls::-webkit-scrollbar{ height: 6px; }
-.controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
+  /* 1) Controles en una sola fila desplazable */
+  .controls{
+    display: flex;
+    flex-wrap: nowrap;
+    gap: .5rem;
+    margin-left: auto;
+    align-items: center;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .controls label, .controls select{ flex: 0 0 auto; }
+  .controls::-webkit-scrollbar{ height: 6px; }
+  .controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
 
-*{ box-sizing: border-box; }
-body{ overflow-x: hidden; }
-select, button{ max-width:100%; flex:0 0 auto; }
-textarea{ width:100%; }
+  /* 2) Evitar desbordes de campos y botones */
+  *{ box-sizing: border-box; }
+  body{ overflow-x: hidden; }
+  select, button{ max-width:100%; flex:0 0 auto; }
+  textarea{ width:100%; }
 
-.order-card .row{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap: .75rem;
-}
-@media (max-width: 768px){
-  .order-card .row{ grid-template-columns: 1fr; }
-  .controls{ margin-left: 0; }
-  textarea{ min-height: 80px; }
-}
+  /* 3) Apilar Detalles/Productos en móviles */
+  .order-card .row{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .75rem;
+  }
+  @media (max-width: 768px){
+    .order-card .row{ grid-template-columns: 1fr; }
+    .controls{ margin-left: 0; }
+    textarea{ min-height: 80px; }
+  }
 
-.bottom-bar{
-  display:flex;
-  gap:.5rem;
-  position: sticky;
-  bottom: 0;
-  background:#fff;
-  border-top:1px solid #e5e7eb;
-  overflow-x:auto;
-  -webkit-overflow-scrolling:touch;
-  white-space:nowrap;
-}
-.bottom-bar button{ flex:0 0 auto; }
+  /* 4) Botonera inferior desplazable para que no sobresalga */
+  .bottom-bar{
+    display:flex;
+    gap:.5rem;
+    position: sticky;
+    bottom: 0;
+    background:#fff;
+    border-top:1px solid #e5e7eb;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap;
+  }
+  .bottom-bar button{ flex:0 0 auto; }
 </style>
 </head>
 
@@ -131,31 +136,55 @@ textarea{ width:100%; }
 
 <script>
 (function(){
-  // ✅ UPDATED: elimina también VS16 (FE0F) y ZWJ (200D) típicos de WhatsApp
+  // ✅ Elimina emojis y también caracteres típicos de WhatsApp (VS16/ZWJ)
   function stripEmojis(s){
     return (s||'')
-      .replace(/[\uFE0F\u200D]/g,'')
+      .replace(/[\uFE0F\u200D]/g,'') // VS16 + ZWJ
       .replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
 
-  // ✅ UPDATED: limpia prefijos de WhatsApp en TODAS las líneas (timestamps + nombre:)
+  // Normalización genérica (para items)
   function normalize(s){
     return stripEmojis(s||'')
       .replace(/\bReenviado\b/gi,'')
       .replace(/https?:\/\/\S+/g,'')
-
-      // Quita CUALQUIER "[...]" al inicio de cada línea (fecha/hora de WhatsApp)
-      .replace(/^\s*\[[^\]]+\]\s*/gmi,'')
-
-      // Quita "Nombre:" al inicio de cada línea (ej: "Mary Cuba:")
-      .replace(/^\s*[^:\n]{1,60}:\s*/gmi,'')
-
       .replace(/\s+\n/g,'\n')
       .replace(/\n{3,}/g,'\n\n')
       .trim();
   }
 
-  function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
+  // ✅ NUEVO: Normalización FUERTE para "info/detalles" (línea por línea)
+  function normalizeDetails(s){
+    // 1) Normaliza saltos de línea y espacios raros de WhatsApp
+    let t = (s || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[\u00A0\u202F]/g, ' ')      // NBSP + narrow no-break space
+      .replace(/[\u200B-\u200F\u2060]/g,'') // zero-width / marks
+      .trim();
+
+    if(!t) return '';
+
+    // 2) Limpia línea por línea
+    const lines = t.split('\n').map(line => {
+      let x = stripEmojis(line).trim();
+
+      // Quita: [24/12, 11:47 a.m.]  (cualquier cosa entre [] al inicio)
+      x = x.replace(/^\s*\[[^\]]+\]\s*/,'').trim();
+
+      // Quita: "Mary Cuba:" al inicio (nombre remitente)
+      x = x.replace(/^\s*[^:\n]{1,80}:\s*/,'').trim();
+
+      // Quita texto vacío o separadores raros
+      return x;
+    }).filter(Boolean);
+
+    return lines.join('\n').trim();
+  }
+
+  function getPrefix(){
+    const sel=document.getElementById('itemPrefix');
+    return sel ? sel.value : 'dash';
+  }
 
   function parseMoney(str){
     const s=(str||'').replace(/[^0-9,\.]/g,'');
@@ -169,10 +198,12 @@ textarea{ width:100%; }
     return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
   }
 
+  // Ignora líneas con TOTAL (aunque tenga emojis)
   function isTotalLine(s){
     return /\btotal\b/i.test(stripEmojis(s||''));
   }
 
+  // Cálculo robusto (subtotal/envío/total). TOTAL se ignora.
   function computeTotals(lines){
     const out = { subtotal: 0, envio: 0, total: 0 };
 
@@ -198,7 +229,8 @@ textarea{ width:100%; }
   }
 
   function buildOrderDOM(detailsText, itemsText, idx){
-    const order=document.createElement('div'); order.className='order';
+    const order=document.createElement('div');
+    order.className='order';
 
     if(document.getElementById('showLabels')?.checked){
       const lab=document.createElement('div');
@@ -207,7 +239,8 @@ textarea{ width:100%; }
       order.appendChild(lab);
     }
 
-    const details=normalize(detailsText);
+    // ✅ usa limpieza fuerte SOLO para el textarea de info
+    const details = normalizeDetails(detailsText);
     if(details){
       const h=document.createElement('div');
       h.className='head';
@@ -216,8 +249,9 @@ textarea{ width:100%; }
     }
 
     const prefixMode=getPrefix();
-    const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
+    const rawItems = normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
 
+    // Líneas de items (ignora TOTAL)
     rawItems.forEach(ln=>{
       if(isTotalLine(ln)) return;
 
@@ -231,7 +265,8 @@ textarea{ width:100%; }
       }
       const right=ln.slice(i).replace(/\s+/g,'');
 
-      const row=document.createElement('div'); row.className='line';
+      const row=document.createElement('div');
+      row.className='line';
       const a=document.createElement('span'); a.textContent=left;
       const b=document.createElement('span'); b.className='price'; b.textContent=right;
       row.append(a,b);
@@ -264,7 +299,8 @@ textarea{ width:100%; }
   }
 
   function render(){
-    const sheet=document.getElementById('sheet'); sheet.innerHTML='';
+    const sheet=document.getElementById('sheet');
+    sheet.innerHTML='';
     const cards=[...document.querySelectorAll('.order-card')];
     cards.forEach((card,idx)=>{
       const d=card.querySelector('.ta-details')?.value||'';
@@ -274,6 +310,7 @@ textarea{ width:100%; }
   }
 
   const ordersUI=document.getElementById('ordersUI');
+
   function renumber(){
     [...ordersUI.children].forEach((sec,i)=>{
       const h2=sec.querySelector('h2');
@@ -302,7 +339,8 @@ textarea{ width:100%; }
 
   function addOrder(detailsText='', itemsText=''){
     const idx=ordersUI.children.length;
-    const card=document.createElement('section'); card.className='order-card';
+    const card=document.createElement('section');
+    card.className='order-card';
     card.innerHTML=`
       <header>
         <h2>Pedido ${idx+1}</h2>
@@ -333,16 +371,23 @@ TOTAL (opcional) $3000"></textarea>
     taI.addEventListener('input', ()=>{ saveState(); render(); });
 
     card.querySelector('.del').addEventListener('click', ()=>{
-      card.remove(); renumber(); saveState(); render();
+      card.remove();
+      renumber();
+      saveState();
+      render();
     });
+
     card.querySelector('.dup').addEventListener('click', ()=>{
-      addOrder(taD.value, taI.value); render(); saveState();
+      addOrder(taD.value, taI.value);
+      render();
+      saveState();
     });
   }
 
   function init(){
     document.getElementById('addOrder')?.addEventListener('click', ()=>{
-      addOrder(); saveState();
+      addOrder();
+      saveState();
       window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'});
       render();
     });
@@ -361,10 +406,12 @@ TOTAL (opcional) $3000"></textarea>
       document.documentElement.style.setProperty('--font-size', e.target.value);
       render();
     });
+
     document.getElementById('cols')?.addEventListener('change', e=>{
       document.documentElement.style.setProperty('--columns', e.target.value);
       render();
     });
+
     document.getElementById('itemPrefix')?.addEventListener('change', render);
 
     loadState();
