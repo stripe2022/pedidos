@@ -235,30 +235,23 @@ textarea{ width:100%; }
     });
 
     // Totales
-    if(document.getElementById('showTotals')?.checked){
-      const t = computeTotals(rawItems);
+   // Totales (SOLO total sin domicilio)
+if(document.getElementById('showTotals')?.checked){
+  const t = computeTotals(rawItems);
 
-      const totals=document.createElement('div'); totals.className='totals';
+  const totals=document.createElement('div');
+  totals.className='totals';
 
-      // Total sin domicilio (Subtotal)
-      const rowSub=document.createElement('div'); rowSub.className='rowt t-caja';
-      rowSub.innerHTML=`<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
-      totals.append(rowSub);
+  const rowSub=document.createElement('div');
+  rowSub.className='rowt t-caja';
+  rowSub.innerHTML =
+    `<span>Total sin domicilio</span>
+     <span class="price">${money(t.subtotal)}</span>`;
 
-      // Domicilio (si existe)
-      if(t.envio > 0){
-        const rowEnv=document.createElement('div'); rowEnv.className='rowt';
-        rowEnv.innerHTML=`<span>Domicilio</span><span class="price">${money(t.envio)}</span>`;
-        totals.append(rowEnv);
-      }
+  totals.append(rowSub);
+  order.appendChild(totals);
+}
 
-      // Total final
-      const rowTot=document.createElement('div'); rowTot.className='rowt';
-      rowTot.innerHTML=`<span>Total</span><span class="price">${money(t.total)}</span>`;
-      totals.append(rowTot);
-
-      order.appendChild(totals);
-    }
 
     return order;
   }
