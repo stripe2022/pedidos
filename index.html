@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/pedidos/styles.css">
 
 <title>Pedidos WhatsApp → A4 compacto</title>
+
 <style>
   :root{ --font-size: 9pt; --columns: 2; --margin: 10mm; --gap: 8mm; }
   body{font-family: system-ui, Arial, Helvetica, sans-serif; margin:0; background:#f6f7f8; color:#111; display:flex; flex-direction:column; min-height:100vh}
@@ -128,7 +129,7 @@
       .trim();
   }
 
-  // ✅ FIX REAL: funciona aunque WhatsApp venga en UNA SOLA LÍNEA
+  // ✅ CORRECCIÓN REAL (para tu caso exacto de la captura)
   function normalizeDetails(s){
     let t = (s || '')
       .replace(/\r\n?/g, '\n')
@@ -138,32 +139,31 @@
 
     if(!t) return '';
 
-    // 1) Si el texto viene pegado en una sola línea, separa mensajes por el cierre del timestamp "]"
-    //    Ej: "... [24/12, 12:05 p.m.] Mary: ..." -> mete salto de línea antes del siguiente mensaje
-    t = t.replace(/(\])\s+/g, '$1\n');
+    // 0) Si viene todo pegado, mete salto de línea antes de un timestamp tipo [24/12, ...]
+    // (así separa mensajes aunque el usuario lo haya pegado en una sola línea)
+    t = t.replace(/\s*(\[\d{1,2}\/\d{1,2},)/g, '\n$1');
 
-    // 2) Detecta el nombre del chat desde el primer patrón: [..] Nombre:
-    const m = t.match(/\[[^\]]+\]\s*([^:\n]{1,80}):/);
-    const name = m ? stripEmojis(m[1]).trim() : '';
+    // Detectar nombre (Mary Cuba) desde el texto (sin emojis) para borrar SOLO ese "Nombre:"
+    const tDetect = stripEmojis(t);
+    const m = tDetect.match(/(?:^|\n)\s*(?:\[[^\]]+\]\s*)?([^:\n]{1,80}):/);
+    const name = m ? m[1].trim() : '';
 
-    // 3) Limpia línea por línea (ya separado)
-    const lines = t.split('\n').map(line => {
-      let x = stripEmojis(line).trim();
+    // 1) Quita TODOS los timestamps [ ... ] estén donde estén
+    t = t.replace(/\[[^\]]+\]\s*/g, '');
 
-      // quita cualquier timestamp [ ... ] al inicio de la línea
-      x = x.replace(/^\s*\[[^\]]+\]\s*/,'').trim();
+    // 2) Quita emojis (corazones, etc)
+    t = stripEmojis(t);
 
-      // quita el nombre detectado (todas las veces) al inicio
-      if(name){
-        const esc = name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-        x = x.replace(new RegExp('^\\s*' + esc + '\\s*:\\s*','i'),'').trim();
-      }
+    // 3) Quita SOLO el nombre detectado + ":" (todas las ocurrencias)
+    if(name){
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      t = t.replace(new RegExp('\\b' + esc + '\\s*:\\s*', 'gi'), '');
+    }
 
-      // fallback genérico por si no detectó bien el nombre
-      x = x.replace(/^\s*[^:\n]{1,80}:\s*/,'').trim();
-
-      return x;
-    }).filter(Boolean);
+    // 4) Limpia por líneas y compacta
+    const lines = t.split('\n')
+      .map(x => (x||'').replace(/\s{2,}/g,' ').trim())
+      .filter(Boolean);
 
     return lines.join('\n').trim();
   }
@@ -224,7 +224,6 @@
       order.appendChild(lab);
     }
 
-    // ✅ aplica limpieza fuerte SOLO al textarea de info
     const details = normalizeDetails(detailsText);
     if(details){
       const h=document.createElement('div');
@@ -257,7 +256,6 @@
       order.appendChild(row);
     });
 
-    // Totales: siempre "Total sin domicilio" y si hay domicilio muestra "Total"
     if(document.getElementById('showTotals')?.checked){
       const t = computeTotals(rawItems);
 
