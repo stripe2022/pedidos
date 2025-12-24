@@ -235,20 +235,27 @@ textarea{ width:100%; }
     });
 
     // Totales
-   // Totales (SOLO total sin domicilio)
+  // Totales: siempre "Total sin domicilio" y si hay domicilio muestra "Total"
 if(document.getElementById('showTotals')?.checked){
   const t = computeTotals(rawItems);
 
-  const totals=document.createElement('div');
-  totals.className='totals';
+  const totals = document.createElement('div');
+  totals.className = 'totals';
 
-  const rowSub=document.createElement('div');
-  rowSub.className='rowt t-caja';
-  rowSub.innerHTML =
-    `<span>Total sin domicilio</span>
-     <span class="price">${money(t.subtotal)}</span>`;
-
+  // Total sin domicilio (subtotal)
+  const rowSub = document.createElement('div');
+  rowSub.className = 'rowt t-caja';
+  rowSub.innerHTML = `<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
   totals.append(rowSub);
+
+  // Si hay domicilio/envío, mostrar Total final (sin mostrar "Domicilio")
+  if(t.envio > 0){
+    const rowTot = document.createElement('div');
+    rowTot.className = 'rowt';
+    rowTot.innerHTML = `<span>Total</span><span class="price">${money(t.total)}</span>`;
+    totals.append(rowTot);
+  }
+
   order.appendChild(totals);
 }
 
