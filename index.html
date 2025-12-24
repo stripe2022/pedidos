@@ -41,7 +41,6 @@
   @media print{ header,.orders-ui,.bottom-bar{ display:none!important } body{background:#fff} .paper{box-shadow:none;margin:0} .paper .sheet{padding:0} }
 </style>
 <style>
-  /* 1) Controles en una sola fila desplazable */
 .controls{
   display: flex;
   flex-wrap: nowrap;
@@ -57,13 +56,11 @@
 .controls::-webkit-scrollbar{ height: 6px; }
 .controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
 
-/* 2) Evitar desbordes de campos y botones */
 *{ box-sizing: border-box; }
 body{ overflow-x: hidden; }
 select, button{ max-width:100%; flex:0 0 auto; }
 textarea{ width:100%; }
 
-/* 3) Apilar Detalles/Productos en móviles */
 .order-card .row{
   display:grid;
   grid-template-columns: 1fr 1fr;
@@ -75,7 +72,6 @@ textarea{ width:100%; }
   textarea{ min-height: 80px; }
 }
 
-/* 4) Botonera inferior desplazable para que no sobresalga */
 .bottom-bar{
   display:flex;
   gap:.5rem;
@@ -135,17 +131,30 @@ textarea{ width:100%; }
 
 <script>
 (function(){
+  // ✅ UPDATED: elimina también VS16 (FE0F) y ZWJ (200D) típicos de WhatsApp
   function stripEmojis(s){
-    return (s||'').replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
+    return (s||'')
+      .replace(/[\uFE0F\u200D]/g,'')
+      .replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
+
+  // ✅ UPDATED: limpia prefijos de WhatsApp en TODAS las líneas (timestamps + nombre:)
   function normalize(s){
     return stripEmojis(s||'')
       .replace(/\bReenviado\b/gi,'')
       .replace(/https?:\/\/\S+/g,'')
+
+      // Quita CUALQUIER "[...]" al inicio de cada línea (fecha/hora de WhatsApp)
+      .replace(/^\s*\[[^\]]+\]\s*/gmi,'')
+
+      // Quita "Nombre:" al inicio de cada línea (ej: "Mary Cuba:")
+      .replace(/^\s*[^:\n]{1,60}:\s*/gmi,'')
+
       .replace(/\s+\n/g,'\n')
       .replace(/\n{3,}/g,'\n\n')
       .trim();
   }
+
   function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
 
   function parseMoney(str){
@@ -155,16 +164,15 @@ textarea{ width:100%; }
     if(/,\d{2}$/.test(s)) return parseFloat(s.replace(',', '.'))||0;
     return parseFloat(s.replace(/,/g,''))||0;
   }
+
   function money(x){
     return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
   }
 
-  // ✅ NUEVO: detecta líneas tipo "💵 Total: $19500.00" y las ignora
   function isTotalLine(s){
     return /\btotal\b/i.test(stripEmojis(s||''));
   }
 
-  // ✅ NUEVO: cálculo robusto (no depende del orden)
   function computeTotals(lines){
     const out = { subtotal: 0, envio: 0, total: 0 };
 
@@ -173,12 +181,10 @@ textarea{ width:100%; }
 
     for(const raw of lines){
       if(!raw) continue;
-
-      // ignora TOTAL aunque tenga emojis
       if(isTotalLine(raw)) continue;
 
       const i = raw.lastIndexOf('$');
-      if(i < 0) continue; // sin $ => ignora
+      if(i < 0) continue;
 
       const amount = parseMoney(raw.slice(i));
       if(!isFinite(amount) || amount <= 0) continue;
@@ -212,9 +218,7 @@ textarea{ width:100%; }
     const prefixMode=getPrefix();
     const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
 
-    // líneas (solo ítems que tienen $)
     rawItems.forEach(ln=>{
-      // ❗ si es TOTAL, no la mostramos como línea de item
       if(isTotalLine(ln)) return;
 
       const i=ln.lastIndexOf('$');
@@ -234,31 +238,27 @@ textarea{ width:100%; }
       order.appendChild(row);
     });
 
-    // Totales
-  // Totales: siempre "Total sin domicilio" y si hay domicilio muestra "Total"
-if(document.getElementById('showTotals')?.checked){
-  const t = computeTotals(rawItems);
+    // Totales: siempre "Total sin domicilio" y si hay domicilio muestra "Total"
+    if(document.getElementById('showTotals')?.checked){
+      const t = computeTotals(rawItems);
 
-  const totals = document.createElement('div');
-  totals.className = 'totals';
+      const totals = document.createElement('div');
+      totals.className = 'totals';
 
-  // Total sin domicilio (subtotal)
-  const rowSub = document.createElement('div');
-  rowSub.className = 'rowt t-caja';
-  rowSub.innerHTML = `<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
-  totals.append(rowSub);
+      const rowSub = document.createElement('div');
+      rowSub.className = 'rowt t-caja';
+      rowSub.innerHTML = `<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
+      totals.append(rowSub);
 
-  // Si hay domicilio/envío, mostrar Total final (sin mostrar "Domicilio")
-  if(t.envio > 0){
-    const rowTot = document.createElement('div');
-    rowTot.className = 'rowt';
-    rowTot.innerHTML = `<span>Total</span><span class="price">${money(t.total)}</span>`;
-    totals.append(rowTot);
-  }
+      if(t.envio > 0){
+        const rowTot = document.createElement('div');
+        rowTot.className = 'rowt';
+        rowTot.innerHTML = `<span>Total</span><span class="price">${money(t.total)}</span>`;
+        totals.append(rowTot);
+      }
 
-  order.appendChild(totals);
-}
-
+      order.appendChild(totals);
+    }
 
     return order;
   }
@@ -280,6 +280,7 @@ if(document.getElementById('showTotals')?.checked){
       if(h2) h2.textContent=`Pedido ${i+1}`;
     });
   }
+
   function saveState(){
     const data=[...document.querySelectorAll('.order-card')].map(card=>({
       d:card.querySelector('.ta-details')?.value||'',
@@ -287,6 +288,7 @@ if(document.getElementById('showTotals')?.checked){
     }));
     localStorage.setItem('orders_v5', JSON.stringify(data));
   }
+
   function loadState(){
     const raw=localStorage.getItem('orders_v5');
     if(!raw){ addOrder(); return; }
