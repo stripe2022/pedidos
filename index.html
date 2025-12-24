@@ -88,9 +88,9 @@ textarea{ width:100%; }
   white-space:nowrap;
 }
 .bottom-bar button{ flex:0 0 auto; }
-
 </style>
 </head>
+
 <body>
   <header>
     <h1>Pedidos WhatsApp → A4 compacto</h1>
@@ -128,6 +128,7 @@ textarea{ width:100%; }
   <div class="bottom-bar">
     <button id="addOrder">+ Agregar</button>
     <button id="clearAll">Limpiar todo</button>
+
     <button class="primary" id="btnFormat">Formatear</button>
     <button id="btnPrint">Imprimir</button>
   </div>
@@ -137,29 +138,16 @@ textarea{ width:100%; }
   function stripEmojis(s){
     return (s||'').replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
- function normalize(s){
-  return stripEmojis(s||'')
-    // 🔴 Quita el bloque de hora de WhatsApp: [11:56 AM, 12/9/2025]
-    .replace(/\[\d{1,2}:\d{2}\s*(AM|PM)?,?\s*\d{1,2}\/\d{1,2}\/\d{4}\]/gi, '')
-
-    // 🔴 Quita el nombre del remitente tipo: "♥️Mary Cuba:" o "Juan Pérez:"
-    .replace(/^[^:\n]{2,40}:\s*/gm, '')
-
-    // 🔴 Quita la palabra "Reenviado"
-    .replace(/\bReenviado\b/gi,'')
-
-    // 🔴 Quita links
-    .replace(/https?:\/\/\S+/g,'')
-
-    // 🔴 Limpia saltos de línea feos
-    .replace(/\s+\n/g,'\n')
-    .replace(/\n{3,}/g,'\n\n')
-
-    .trim();
-}
-
-
+  function normalize(s){
+    return stripEmojis(s||'')
+      .replace(/\bReenviado\b/gi,'')
+      .replace(/https?:\/\/\S+/g,'')
+      .replace(/\s+\n/g,'\n')
+      .replace(/\n{3,}/g,'\n\n')
+      .trim();
+  }
   function getPrefix(){ const sel=document.getElementById('itemPrefix'); return sel? sel.value : 'dash'; }
+
   function parseMoney(str){
     const s=(str||'').replace(/[^0-9,\.]/g,'');
     if(!s) return 0;
@@ -167,74 +155,111 @@ textarea{ width:100%; }
     if(/,\d{2}$/.test(s)) return parseFloat(s.replace(',', '.'))||0;
     return parseFloat(s.replace(/,/g,''))||0;
   }
-  function money(x){ 
+  function money(x){
     return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
   }
 
-  // CÁLCULO CORREGIDO: suma productos, ignora TOTAL y DOMICILIO/DELIVERY
-  function computeCaja(lines){
-    // Solo líneas que tengan $
-    const moneyLines = (lines || []).filter(l => l && l.includes('$'));
+  // ✅ NUEVO: detecta líneas tipo "💵 Total: $19500.00" y las ignora
+  function isTotalLine(s){
+    return /\btotal\b/i.test(stripEmojis(s||''));
+  }
 
-    // Ignorar líneas que contengan "total"
-    const withoutTotal = moneyLines.filter(l => !/\btotal\b/i.test(l));
+  // ✅ NUEVO: cálculo robusto (no depende del orden)
+  function computeTotals(lines){
+    const out = { subtotal: 0, envio: 0, total: 0 };
 
-    // Consideramos productos las que no sean domicilio / delivery
-    const productLines = withoutTotal.filter(l => !/domicilio/i.test(l) && !/delivery/i.test(l));
+    const isEnvioLine = (s) =>
+      /\b(domicilio|envio|envío|entrega|delivery|mensajer[íi]a|reparto)\b/i.test(stripEmojis(s||''));
 
-    const amounts = productLines.map(line => {
-      const i = line.lastIndexOf('$');
-      if (i <= 0) return 0;
-      return parseMoney(line.slice(i));
-    }).filter(n => n > 0);
+    for(const raw of lines){
+      if(!raw) continue;
 
-    if (!amounts.length) return 0;
-    return amounts.reduce((a,b) => a + b, 0);
+      // ignora TOTAL aunque tenga emojis
+      if(isTotalLine(raw)) continue;
+
+      const i = raw.lastIndexOf('$');
+      if(i < 0) continue; // sin $ => ignora
+
+      const amount = parseMoney(raw.slice(i));
+      if(!isFinite(amount) || amount <= 0) continue;
+
+      if(isEnvioLine(raw)) out.envio += amount;
+      else out.subtotal += amount;
+    }
+
+    out.total = out.subtotal + out.envio;
+    return out;
   }
 
   function buildOrderDOM(detailsText, itemsText, idx){
     const order=document.createElement('div'); order.className='order';
+
     if(document.getElementById('showLabels')?.checked){
-      const lab=document.createElement('div'); lab.className='pedido-label'; lab.textContent=`Pedido ${idx+1}`; order.appendChild(lab);
+      const lab=document.createElement('div');
+      lab.className='pedido-label';
+      lab.textContent=`Pedido ${idx+1}`;
+      order.appendChild(lab);
     }
+
     const details=normalize(detailsText);
-    if(details){ 
-      const h=document.createElement('div'); 
-      h.className='head'; 
-      h.textContent=details.replace(/\n+/g,' · '); 
-      order.appendChild(h); 
+    if(details){
+      const h=document.createElement('div');
+      h.className='head';
+      h.textContent=details.replace(/\n+/g,' · ');
+      order.appendChild(h);
     }
 
     const prefixMode=getPrefix();
     const rawItems=normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
 
+    // líneas (solo ítems que tienen $)
     rawItems.forEach(ln=>{
+      // ❗ si es TOTAL, no la mostramos como línea de item
+      if(isTotalLine(ln)) return;
+
       const i=ln.lastIndexOf('$');
       if(i<=0) return;
+
       let left=ln.slice(0,i).replace(/[:\-]+\s*$/,'').trim();
       if(!/^[-–•]/.test(left)){
-        if(prefixMode==='dash') left='— '+left; else if(prefixMode==='dot') left='• '+left;
+        if(prefixMode==='dash') left='— '+left;
+        else if(prefixMode==='dot') left='• '+left;
       }
       const right=ln.slice(i).replace(/\s+/g,'');
-      const row = document.createElement('div');
-row.className = 'line';
 
-// ✅ SI LA LÍNEA ES TOTAL → SE RESALTA
-if (/^total\b/i.test(ln)) {
-  row.classList.add('line-total');
-}
+      const row=document.createElement('div'); row.className='line';
       const a=document.createElement('span'); a.textContent=left;
       const b=document.createElement('span'); b.className='price'; b.textContent=right;
-      row.append(a,b); order.appendChild(row);
+      row.append(a,b);
+      order.appendChild(row);
     });
 
+    // Totales
     if(document.getElementById('showTotals')?.checked){
-      const caja = computeCaja(rawItems);
+      const t = computeTotals(rawItems);
+
       const totals=document.createElement('div'); totals.className='totals';
-      const rowCaja=document.createElement('div'); rowCaja.className='rowt t-caja';
-      rowCaja.innerHTML=`<span>Total sin domicilio</span><span class="price">${money(caja)}</span>`;
-      totals.append(rowCaja); order.appendChild(totals);
+
+      // Total sin domicilio (Subtotal)
+      const rowSub=document.createElement('div'); rowSub.className='rowt t-caja';
+      rowSub.innerHTML=`<span>Total sin domicilio</span><span class="price">${money(t.subtotal)}</span>`;
+      totals.append(rowSub);
+
+      // Domicilio (si existe)
+      if(t.envio > 0){
+        const rowEnv=document.createElement('div'); rowEnv.className='rowt';
+        rowEnv.innerHTML=`<span>Domicilio</span><span class="price">${money(t.envio)}</span>`;
+        totals.append(rowEnv);
+      }
+
+      // Total final
+      const rowTot=document.createElement('div'); rowTot.className='rowt';
+      rowTot.innerHTML=`<span>Total</span><span class="price">${money(t.total)}</span>`;
+      totals.append(rowTot);
+
+      order.appendChild(totals);
     }
+
     return order;
   }
 
@@ -249,74 +274,37 @@ if (/^total\b/i.test(ln)) {
   }
 
   const ordersUI=document.getElementById('ordersUI');
-  function renumber(){ 
-    [...ordersUI.children].forEach((sec,i)=>{ 
-      const h2=sec.querySelector('h2'); 
-      if(h2) h2.textContent=`Pedido ${i+1}`; 
-    }); 
-  }
-  function saveState(){ 
-    const data=[...document.querySelectorAll('.order-card')].map(card=>({
-      d:card.querySelector('.ta-details')?.value||'', 
-      i:card.querySelector('.ta-items')?.value||''
-    })); 
-    localStorage.setItem('orders_v5', JSON.stringify(data)); 
-  }
-
-  function loadState(){ 
-    const raw=localStorage.getItem('orders_v5'); 
-    if(!raw){ 
-      addOrder(); 
-      return; 
-    } 
-    try{ 
-      const arr=JSON.parse(raw); 
-      if(Array.isArray(arr)&&arr.length){ 
-        arr.forEach(o=>addOrder(o.d||'', o.i||'')); 
-      } else addOrder(); 
-    }catch{ 
-      addOrder(); 
-    } 
-  }
-
-  // MODO TRABAJADOR: pega el pedido completo de WhatsApp y se separa solo
-  function autoFillFromRaw(card, rawText){
-    if(!rawText) return;
-    const cleaned = normalize(rawText);
-    const lines = cleaned.split(/\n+/).map(l => l.trim()).filter(Boolean);
-
-    const detailLines = [];
-    const itemLines = [];
-
-    lines.forEach(line => {
-      // Si tiene $, lo consideramos producto
-      if(line.includes('$')){
-        itemLines.push(line);
-      } else {
-        // Sin $, lo consideramos detalle (nombre, dirección, teléfono, etc.)
-        detailLines.push(line);
-      }
+  function renumber(){
+    [...ordersUI.children].forEach((sec,i)=>{
+      const h2=sec.querySelector('h2');
+      if(h2) h2.textContent=`Pedido ${i+1}`;
     });
-
-    const taD = card.querySelector('.ta-details');
-    const taI = card.querySelector('.ta-items');
-
-    if(taD) taD.value = detailLines.join(' · ');
-    if(taI) taI.value = itemLines.join('\n');
-
-    saveState();
-    render();
+  }
+  function saveState(){
+    const data=[...document.querySelectorAll('.order-card')].map(card=>({
+      d:card.querySelector('.ta-details')?.value||'',
+      i:card.querySelector('.ta-items')?.value||''
+    }));
+    localStorage.setItem('orders_v5', JSON.stringify(data));
+  }
+  function loadState(){
+    const raw=localStorage.getItem('orders_v5');
+    if(!raw){ addOrder(); return; }
+    try{
+      const arr=JSON.parse(raw);
+      if(Array.isArray(arr)&&arr.length){
+        arr.forEach(o=>addOrder(o.d||'', o.i||''));
+      } else addOrder();
+    }catch{ addOrder(); }
   }
 
   function addOrder(detailsText='', itemsText=''){
     const idx=ordersUI.children.length;
-    const card=document.createElement('section'); 
-    card.className='order-card';
+    const card=document.createElement('section'); card.className='order-card';
     card.innerHTML=`
       <header>
         <h2>Pedido ${idx+1}</h2>
-        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-          <button class="paste">Pegar WhatsApp</button>
+        <div style="display:flex;gap:.5rem">
           <button class="dup">Duplicar</button>
           <button class="del">Eliminar</button>
         </div>
@@ -326,82 +314,54 @@ if (/^total\b/i.test(ln)) {
           <textarea class="ta-details" placeholder="Detalles: cliente, dirección, tel."></textarea>
         </div>
         <div>
-          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio&#10;Ej.: Huevera Azul $2800&#10;Domicilio $200&#10;TOTAL (opcional) $3000"></textarea>
+          <textarea class="ta-items" placeholder="Productos: una línea por ítem con $precio
+Ej.: Huevera Azul $2800
+Domicilio $200
+TOTAL (opcional) $3000"></textarea>
         </div>
       </div>`;
     ordersUI.appendChild(card);
 
-    const taD=card.querySelector('.ta-details'); 
+    const taD=card.querySelector('.ta-details');
     const taI=card.querySelector('.ta-items');
-    taD.value=detailsText; 
+    taD.value=detailsText;
     taI.value=itemsText;
 
-    taD.addEventListener('input', ()=>{ saveState(); });
-    taI.addEventListener('input', ()=>{ saveState(); });
+    taD.addEventListener('input', ()=>{ saveState(); render(); });
+    taI.addEventListener('input', ()=>{ saveState(); render(); });
 
-    // Eliminar
-    card.querySelector('.del').addEventListener('click', ()=>{ 
-      card.remove(); 
-      renumber(); 
-      saveState(); 
-      render(); 
+    card.querySelector('.del').addEventListener('click', ()=>{
+      card.remove(); renumber(); saveState(); render();
     });
-
-    // Duplicar
-    card.querySelector('.dup').addEventListener('click', ()=>{ 
-      addOrder(taD.value, taI.value); 
-      render(); 
-      saveState(); 
+    card.querySelector('.dup').addEventListener('click', ()=>{
+      addOrder(taD.value, taI.value); render(); saveState();
     });
-
-    // Pegar pedido completo de WhatsApp (modo trabajador)
-    const btnPaste = card.querySelector('.paste');
-    if(btnPaste){
-      btnPaste.addEventListener('click', () => {
-        const raw = prompt('Pega aquí el texto completo del pedido de WhatsApp:');
-        autoFillFromRaw(card, raw);
-      });
-    }
   }
 
   function init(){
-    document.getElementById('addOrder')?.addEventListener('click', ()=>{ 
-      addOrder(); 
-      saveState(); 
-      window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); 
-    });
-    document.getElementById('clearAll')?.addEventListener('click', ()=>{ 
-      ordersUI.innerHTML=''; 
-      localStorage.removeItem('orders_v5'); 
-      addOrder(); 
-      render(); 
-    });
-    document.getElementById('demo')?.addEventListener('click', ()=>{ 
-      ordersUI.innerHTML='';
-      addOrder(
-        'Odalmis · Calle Gloria / Parque y Maceo · 58991778',
-        '2 Desodorantes $1000\n3 Huevera (A/R/Azul) $8400\nColonia $1500\nTazas sin plato $1800\nDomicilio $200'
-      );
-      addOrder(
-        'Yaneisy · 6ta entre Central y A Vigía · Consultorio 16-24 · 55180160',
-        'Huevera Azul $2800\nDomicilio $200\nTOTAL $3000'
-      );
-      addOrder(
-        'Cliente Prueba',
-        'Item A $1.234,50\nItem B $765,50\nDomicilio $150\nTOTAL $2.150,00'
-      );
-      saveState(); 
+    document.getElementById('addOrder')?.addEventListener('click', ()=>{
+      addOrder(); saveState();
+      window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'});
       render();
     });
+
+    document.getElementById('clearAll')?.addEventListener('click', ()=>{
+      ordersUI.innerHTML='';
+      localStorage.removeItem('orders_v5');
+      addOrder();
+      render();
+    });
+
     document.getElementById('btnFormat')?.addEventListener('click', render);
     document.getElementById('btnPrint')?.addEventListener('click', ()=>window.print());
-    document.getElementById('fontSize')?.addEventListener('change', e=>{ 
-      document.documentElement.style.setProperty('--font-size', e.target.value); 
-      render(); 
+
+    document.getElementById('fontSize')?.addEventListener('change', e=>{
+      document.documentElement.style.setProperty('--font-size', e.target.value);
+      render();
     });
-    document.getElementById('cols')?.addEventListener('change', e=>{ 
-      document.documentElement.style.setProperty('--columns', e.target.value); 
-      render(); 
+    document.getElementById('cols')?.addEventListener('change', e=>{
+      document.documentElement.style.setProperty('--columns', e.target.value);
+      render();
     });
     document.getElementById('itemPrefix')?.addEventListener('change', render);
 
@@ -409,10 +369,8 @@ if (/^total\b/i.test(ln)) {
     render();
   }
 
-  if(document.readyState==='loading') 
-    document.addEventListener('DOMContentLoaded', init); 
-  else 
-    init();
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>
 
@@ -423,10 +381,8 @@ if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.register('/pedidos/sw.js', { scope: '/pedidos/' });
       console.log('SW registrado con scope:', reg.scope);
 
-      // Detecta nuevas versiones e intenta activarlas
       reg.onupdatefound = () => {
         const nw = reg.installing;
-        if (!nw) return;
         nw.onstatechange = () => {
           if (nw.state === 'installed' && navigator.serviceWorker.controller) {
             reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
@@ -434,7 +390,6 @@ if ('serviceWorker' in navigator) {
         };
       };
 
-      // Si se activa la nueva versión, recarga para tomar control
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         location.reload();
       });
