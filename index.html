@@ -42,51 +42,29 @@
 </style>
 
 <style>
-  /* 1) Controles en una sola fila desplazable */
   .controls{
-    display: flex;
-    flex-wrap: nowrap;
-    gap: .5rem;
-    margin-left: auto;
-    align-items: center;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    white-space: nowrap;
-    max-width: 100%;
+    display:flex; flex-wrap:nowrap; gap:.5rem; margin-left:auto; align-items:center;
+    overflow-x:auto; -webkit-overflow-scrolling:touch; white-space:nowrap; max-width:100%;
   }
-  .controls label, .controls select{ flex: 0 0 auto; }
+  .controls label, .controls select{ flex:0 0 auto; }
   .controls::-webkit-scrollbar{ height: 6px; }
-  .controls::-webkit-scrollbar-thumb{ background: #ddd; border-radius: 999px; }
+  .controls::-webkit-scrollbar-thumb{ background:#ddd; border-radius:999px; }
 
-  /* 2) Evitar desbordes de campos y botones */
-  *{ box-sizing: border-box; }
-  body{ overflow-x: hidden; }
+  *{ box-sizing:border-box; }
+  body{ overflow-x:hidden; }
   select, button{ max-width:100%; flex:0 0 auto; }
   textarea{ width:100%; }
 
-  /* 3) Apilar Detalles/Productos en móviles */
-  .order-card .row{
-    display:grid;
-    grid-template-columns: 1fr 1fr;
-    gap: .75rem;
-  }
-  @media (max-width: 768px){
-    .order-card .row{ grid-template-columns: 1fr; }
-    .controls{ margin-left: 0; }
-    textarea{ min-height: 80px; }
+  .order-card .row{ display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+  @media (max-width:768px){
+    .order-card .row{ grid-template-columns:1fr; }
+    .controls{ margin-left:0; }
+    textarea{ min-height:80px; }
   }
 
-  /* 4) Botonera inferior desplazable para que no sobresalga */
   .bottom-bar{
-    display:flex;
-    gap:.5rem;
-    position: sticky;
-    bottom: 0;
-    background:#fff;
-    border-top:1px solid #e5e7eb;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    white-space:nowrap;
+    display:flex; gap:.5rem; position:sticky; bottom:0; background:#fff; border-top:1px solid #e5e7eb;
+    overflow-x:auto; -webkit-overflow-scrolling:touch; white-space:nowrap;
   }
   .bottom-bar button{ flex:0 0 auto; }
 </style>
@@ -129,21 +107,18 @@
   <div class="bottom-bar">
     <button id="addOrder">+ Agregar</button>
     <button id="clearAll">Limpiar todo</button>
-
     <button class="primary" id="btnFormat">Formatear</button>
     <button id="btnPrint">Imprimir</button>
   </div>
 
 <script>
 (function(){
-  // ✅ Elimina emojis y también caracteres típicos de WhatsApp (VS16/ZWJ)
   function stripEmojis(s){
     return (s||'')
       .replace(/[\uFE0F\u200D]/g,'') // VS16 + ZWJ
       .replace(/[\uD800-\uDFFF\u2600-\u26FF\u2700-\u27BF]/g, '');
   }
 
-  // Normalización genérica (para items)
   function normalize(s){
     return stripEmojis(s||'')
       .replace(/\bReenviado\b/gi,'')
@@ -153,28 +128,40 @@
       .trim();
   }
 
-  // ✅ NUEVO: Normalización FUERTE para "info/detalles" (línea por línea)
+  // ✅ FIX REAL: funciona aunque WhatsApp venga en UNA SOLA LÍNEA
   function normalizeDetails(s){
-    // 1) Normaliza saltos de línea y espacios raros de WhatsApp
     let t = (s || '')
       .replace(/\r\n?/g, '\n')
-      .replace(/[\u00A0\u202F]/g, ' ')      // NBSP + narrow no-break space
-      .replace(/[\u200B-\u200F\u2060]/g,'') // zero-width / marks
+      .replace(/[\u00A0\u202F]/g, ' ')       // NBSP + narrow NBSP
+      .replace(/[\u200B-\u200F\u2060]/g,'')  // zero-width
       .trim();
 
     if(!t) return '';
 
-    // 2) Limpia línea por línea
+    // 1) Si el texto viene pegado en una sola línea, separa mensajes por el cierre del timestamp "]"
+    //    Ej: "... [24/12, 12:05 p.m.] Mary: ..." -> mete salto de línea antes del siguiente mensaje
+    t = t.replace(/(\])\s+/g, '$1\n');
+
+    // 2) Detecta el nombre del chat desde el primer patrón: [..] Nombre:
+    const m = t.match(/\[[^\]]+\]\s*([^:\n]{1,80}):/);
+    const name = m ? stripEmojis(m[1]).trim() : '';
+
+    // 3) Limpia línea por línea (ya separado)
     const lines = t.split('\n').map(line => {
       let x = stripEmojis(line).trim();
 
-      // Quita: [24/12, 11:47 a.m.]  (cualquier cosa entre [] al inicio)
+      // quita cualquier timestamp [ ... ] al inicio de la línea
       x = x.replace(/^\s*\[[^\]]+\]\s*/,'').trim();
 
-      // Quita: "Mary Cuba:" al inicio (nombre remitente)
+      // quita el nombre detectado (todas las veces) al inicio
+      if(name){
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+        x = x.replace(new RegExp('^\\s*' + esc + '\\s*:\\s*','i'),'').trim();
+      }
+
+      // fallback genérico por si no detectó bien el nombre
       x = x.replace(/^\s*[^:\n]{1,80}:\s*/,'').trim();
 
-      // Quita texto vacío o separadores raros
       return x;
     }).filter(Boolean);
 
@@ -198,12 +185,10 @@
     return `$${(Math.round(x*100)/100).toLocaleString('en-US',{minimumFractionDigits:0, maximumFractionDigits:2})}`;
   }
 
-  // Ignora líneas con TOTAL (aunque tenga emojis)
   function isTotalLine(s){
     return /\btotal\b/i.test(stripEmojis(s||''));
   }
 
-  // Cálculo robusto (subtotal/envío/total). TOTAL se ignora.
   function computeTotals(lines){
     const out = { subtotal: 0, envio: 0, total: 0 };
 
@@ -239,7 +224,7 @@
       order.appendChild(lab);
     }
 
-    // ✅ usa limpieza fuerte SOLO para el textarea de info
+    // ✅ aplica limpieza fuerte SOLO al textarea de info
     const details = normalizeDetails(detailsText);
     if(details){
       const h=document.createElement('div');
@@ -251,7 +236,6 @@
     const prefixMode=getPrefix();
     const rawItems = normalize(itemsText).split(/\n+/).map(l=>l.trim()).filter(Boolean);
 
-    // Líneas de items (ignora TOTAL)
     rawItems.forEach(ln=>{
       if(isTotalLine(ln)) return;
 
